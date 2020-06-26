@@ -7,27 +7,21 @@
 */
 
 #include <LiquidCrystal.h>
-
-LiquidCrystal lcd( 4, 6, 10, 11, 12, 13 );
-/*
-void setup() {
-  lcd.begin( 16, 2 );
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Hello, world!");
-}
-*/
 #include <Wire.h>
 #include <INA226.h>
+
+LiquidCrystal lcd( 4, 6, 10, 11, 12, 13 );
 
 INA226 ina;
 double watt;
 double watt_cumsum;
 double vbs;
-double vbs_avg;
+//double vbs_avg;
 long count;
-int lcd_refresh_msec;
-int serial_refresh_msec;
+long lcd_refresh_msec;
+long serial_refresh_msec;
+float shunt_current;
+float calibration_factor;
 
 void checkConfig()
 {
@@ -106,68 +100,61 @@ void checkConfig()
 
 void setup() 
 {
+  calibration_factor = 0.3333;
   lcd_refresh_msec = 1000;
   serial_refresh_msec = 1000;
-
+  
   // check the pin state and set serial refresh interval
-  digitalWrite (2, HIGH);
-  pinMode(2, INPUT);
+  pinMode(2, OUTPUT);
+  pinMode(2, INPUT_PULLUP);
+  delay(50);
   if (digitalRead (2) == HIGH)
   {
-    serial_refresh_msec = 30000;
+    serial_refresh_msec = 60000;
   }
-  pinMode(2, OUTPUT);
-  digitalWrite (2, LOW);
   
   count = 0;
   watt = 0;
   watt_cumsum = 0;
-  vbs_avg = 0;
+
   
   Serial.begin(115200);
 
   Serial.println("Initialize INA226");
-
   Serial.println("-----------------------------------------------");
+  Serial.print("calibration factor:          ");
+  Serial.println(calibration_factor);
+  
   Serial.print("serial refresh interval(sec):");
   Serial.println(serial_refresh_msec/lcd_refresh_msec,DEC);
+  
   
   // Default INA226 address is 0x40
   ina.begin();
 
   // Configure INA226
-  ina.configure(INA226_AVERAGES_1, INA226_BUS_CONV_TIME_1100US, INA226_SHUNT_CONV_TIME_1100US, INA226_MODE_SHUNT_BUS_CONT);
+  ina.configure(INA226_AVERAGES_1, INA226_BUS_CONV_TIME_8244US, INA226_SHUNT_CONV_TIME_8244US, INA226_MODE_SHUNT_BUS_CONT);
 
   // Calibrate INA226. Rshunt = 0.01 ohm, Max excepted current = 4A
-  ina.calibrate(0.01, 4);
+  ina.calibrate(0.01, 1);
 
   // Display configuration
   checkConfig();
 
   Serial.println("-----------------------------------------------");
-  Serial.println("Count,V,W,mA");
+  Serial.println("Count,mV,W,mA");
 
   lcd.begin( 16, 2 );
   lcd.clear();
-  //lcd.setCursor(0, 0);
-  //lcd.print("Hello, world!");
 }
 
 void loop()
-{
-  // read state of pin D2(32) D3(1)
-  //  digitalWrite (2, !digitalRead (2));
-  //Serial.println (digitalRead(2), DEC);
-  
+{  
   count += 1;
-  vbs = ina.readBusVoltage();
-  
-  /*
-  Serial.print("Bus voltage:   ");
-  Serial.print(vbs, 5);
-  Serial.println(" V");
-  */
-  watt = ina.readBusPower();
+  //  vbs = (ina.readBusVoltage() - ina.readShuntVoltage())* 1000;
+  vbs = (ina.readBusVoltage())* 1000;
+  shunt_current = (float)ina.readShuntCurrent() * (float)calibration_factor * 1000 ;
+  watt = vbs * shunt_current / 1000000;
   
   /*
   Serial.print("Bus power:     ");
@@ -182,6 +169,8 @@ void loop()
   Serial.print(ina.readShuntCurrent(), 5);
   Serial.println(" A");
   */
+  
+  //  refresh Serial
   if (count % (serial_refresh_msec / lcd_refresh_msec) == 0)
   {    
     Serial.print(count);
@@ -190,32 +179,32 @@ void loop()
     Serial.print(",");
     Serial.print(watt,3);
     Serial.print(",");
-    Serial.println(ina.readShuntCurrent(), 5);
-    //Serial.println("");
+    Serial.println(shunt_current, 5);
   }
 
+  //  refresh LCD Display
   lcd.clear();
+  
   lcd.setCursor(0, 0);
   lcd.print(vbs, 3);
-  lcd.setCursor(5, 0);
-  lcd.print("V");
+  lcd.setCursor(6, 0);
+  lcd.print("mV");
   
-  lcd.setCursor(7, 0);
-  lcd.print(ina.readShuntCurrent(), 5);
+  lcd.setCursor(9, 0);
+  lcd.print(shunt_current, 4);
   lcd.setCursor(14, 0);
   lcd.print("mA");
   
   lcd.setCursor(0, 1);
-  lcd.print(watt, 3);
-  lcd.setCursor(5, 1);
+  lcd.print(watt, 5);
+  lcd.setCursor(7, 1);
   lcd.print("W");
   
-  watt_cumsum += watt;
-  vbs_avg = vbs_avg + vbs / count;
-  lcd.setCursor(7, 1);
-  lcd.print(watt_cumsum/vbs_avg, 4);
+  watt_cumsum += watt * 10 / (lcd_refresh_msec/36) ;
+  lcd.setCursor(9, 1);
+  lcd.print(watt_cumsum, 3);
   lcd.setCursor(13, 1);
-  lcd.print("mah");
+  lcd.print("mWh");
  
   delay(lcd_refresh_msec);
 }
